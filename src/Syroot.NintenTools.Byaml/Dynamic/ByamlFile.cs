@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using Syroot.BinaryData;
+using Syroot.Maths;
 using Syroot.NintenTools.Byaml.IO;
 
 namespace Syroot.NintenTools.Byaml.Dynamic
@@ -27,6 +28,8 @@ namespace Syroot.NintenTools.Byaml.Dynamic
         private List<string> _nameArray;
         private List<string> _stringArray;
         private List<List<ByamlPathPoint>> _pathArray;
+
+        private Dictionary<uint, dynamic> AlreadyReadNodes = new Dictionary<uint, dynamic>(); // Offset in the file, reference to node
 
         // ---- CONSTRUCTORS & DESTRUCTOR ------------------------------------------------------------------------------
 
@@ -114,7 +117,8 @@ namespace Syroot.NintenTools.Byaml.Dynamic
         /// <returns>The value stored under the given key or <c>null</c> if the key is not present.</returns>
         public static dynamic GetValue(IDictionary<string, dynamic> node, string key)
         {
-            return node.TryGetValue(key, out dynamic value) ? value : null;
+            dynamic value;
+            return node.TryGetValue(key, out value) ? value : null;
         }
 
         /// <summary>
@@ -209,10 +213,15 @@ namespace Syroot.NintenTools.Byaml.Dynamic
             {
                 // Get the length of arrays.
                 long? oldPos = null;
+                uint offset = 0;
                 if (nodeTypeGiven)
                 {
                     // If the node type was given, the array value is read from an offset.
-                    uint offset = reader.ReadUInt32();
+                    offset = reader.ReadUInt32();
+                    if (AlreadyReadNodes.ContainsKey(offset))
+                    {
+                        return AlreadyReadNodes[offset];
+                    }
                     oldPos = reader.Position;
                     reader.Seek(offset, SeekOrigin.Begin);
                 }
@@ -220,15 +229,15 @@ namespace Syroot.NintenTools.Byaml.Dynamic
                 {
                     reader.Seek(-1);
                 }
-                int length = (int)Get3LsbBytes(reader.ReadUInt32());
                 dynamic value = null;
+                int length = (int)Get3LsbBytes(reader.ReadUInt32());
                 switch (nodeType)
                 {
                     case ByamlNodeType.Array:
-                        value = ReadArrayNode(reader, length);
+                        value = ReadArrayNode(reader, length, offset);
                         break;
                     case ByamlNodeType.Dictionary:
-                        value = ReadDictionaryNode(reader, length);
+                        value = ReadDictionaryNode(reader, length, offset);
                         break;
                     case ByamlNodeType.StringArray:
                         value = ReadStringArrayNode(reader, length);
@@ -270,10 +279,11 @@ namespace Syroot.NintenTools.Byaml.Dynamic
             }
         }
 
-        private List<dynamic> ReadArrayNode(BinaryDataReader reader, int length)
+        private List<dynamic> ReadArrayNode(BinaryDataReader reader, int length, uint offset = 0)
         {
             List<dynamic> array = new List<dynamic>(length);
 
+            if (offset != 0) AlreadyReadNodes.Add(offset, array);
             // Read the element types of the array.
             byte[] nodeTypes = reader.ReadBytes(length);
             // Read the elements, which begin after a padding to the next 4 bytes.
@@ -286,10 +296,10 @@ namespace Syroot.NintenTools.Byaml.Dynamic
             return array;
         }
 
-        private Dictionary<string, dynamic> ReadDictionaryNode(BinaryDataReader reader, int length)
+        private Dictionary<string, dynamic> ReadDictionaryNode(BinaryDataReader reader, int length, uint offset = 0)
         {
             Dictionary<string, dynamic> dictionary = new Dictionary<string, dynamic>();
-
+            if (offset != 0) AlreadyReadNodes.Add(offset, dictionary);
             // Read the elements of the dictionary.
             for (int i = 0; i < length; i++)
             {
@@ -357,8 +367,8 @@ namespace Syroot.NintenTools.Byaml.Dynamic
         private ByamlPathPoint ReadPathPoint(BinaryDataReader reader)
         {
             ByamlPathPoint point = new ByamlPathPoint();
-            point.Position = reader.ReadVector3F();
-            point.Normal = reader.ReadVector3F();
+            point.Position = new Vector3F(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+            point.Normal = new Vector3F(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
             point.Unknown = reader.ReadUInt32();
             return point;
         }
@@ -662,8 +672,12 @@ namespace Syroot.NintenTools.Byaml.Dynamic
 
         private void WritePathPoint(BinaryDataWriter writer, ByamlPathPoint point)
         {
-            writer.Write(point.Position);
-            writer.Write(point.Normal);
+            writer.Write(point.Position.X);
+            writer.Write(point.Position.Y);
+            writer.Write(point.Position.Z);
+            writer.Write(point.Normal.X);
+            writer.Write(point.Normal.Y);
+            writer.Write(point.Normal.Z);
             writer.Write(point.Unknown);
         }
 
